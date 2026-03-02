@@ -1,0 +1,49 @@
+# ==========================================
+# BUILDER STAGE
+# ==========================================
+FROM python:3.10-slim AS builder
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency management files
+COPY client/pyproject.toml ./
+# Note: uv sync works with or without uv.lock. For reproducible builds,
+# generate lock file first: cd client && uv lock, then uncomment next line:
+# COPY client/uv.lock ./
+
+# Sync dependencies without trying to install the project code itself
+ENV UV_COMPILE_BYTECODE=1
+RUN uv sync --no-install-project --no-dev
+
+# ==========================================
+# RUNTIME STAGE
+# ==========================================
+FROM python:3.10-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy the completely built virtual environment from the builder
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application code
+COPY client/ /app/client/
+
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Expose Streamlit port
+EXPOSE 8501
+
+# Health check using Python's built-in urllib pointing to Streamlit's core health endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1
+
+# Run Streamlit directly (No need for 'uv run')
+CMD ["streamlit", "run", "client/main.py", "--server.port", "8501", "--server.address", "0.0.0.0"]

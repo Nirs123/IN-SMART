@@ -1,0 +1,17 @@
+[project]
+name = "in-smart"
+version = "0.1.0"
+description = "IN'SMART - Educational RAG-based assistant platform"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[workspace]
+members = [
+    "api",
+    "client",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

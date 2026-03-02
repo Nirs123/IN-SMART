@@ -1,0 +1,50 @@
+# ==========================================
+# BUILDER STAGE
+# ==========================================
+FROM python:3.10-slim AS builder
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency management files
+COPY api/pyproject.toml ./
+# Note: uv sync works with or without uv.lock. For reproducible builds,
+# generate lock file first: cd api && uv lock, then uncomment next line:
+# COPY api/uv.lock ./
+
+# Sync dependencies without trying to install the project code itself
+# We also set UV_COMPILE_BYTECODE for slightly faster startup times
+ENV UV_COMPILE_BYTECODE=1
+RUN uv sync --no-install-project --no-dev
+
+# ==========================================
+# RUNTIME STAGE
+# ==========================================
+FROM python:3.10-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy the completely built virtual environment from the builder
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application code
+COPY api/ /app/api/
+
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Expose port
+EXPOSE 8000
+
+# Health check (Using Python's built-in urllib to avoid needing httpx/curl installed)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+# Run application directly (No need for 'uv run' since the venv is in the PATH)
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

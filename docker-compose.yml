@@ -1,0 +1,89 @@
+services:
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    container_name: in-smart-weaviate
+    ports:
+      - "8080:8080"
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=text2vec-openai,text2vec-cohere,text2vec-huggingface
+      - CLUSTER_HOSTNAME=node1
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    networks:
+      - in-smart-network
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: in-smart-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - in-smart-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/API_Dockerfile
+    container_name: in-smart-api
+    ports:
+      - "8000:8000"
+    environment:
+      - WEAVIATE_URL=http://weaviate:8080
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET_NAME=in-smart-documents
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    volumes:
+      - ./api:/app/api
+    networks:
+      - in-smart-network
+    depends_on:
+      - weaviate
+      - minio
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: docker/Client_Dockerfile
+    container_name: in-smart-client
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    volumes:
+      - ./client:/app/client
+    networks:
+      - in-smart-network
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  weaviate_data:
+  minio_data:
+
+networks:
+  in-smart-network:
+    driver: bridge
