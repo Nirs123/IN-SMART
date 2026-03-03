@@ -1,6 +1,8 @@
 """Chunking service for text segmentation."""
+import re
+from typing import Any, Optional
 
-from typing import List, Dict, Any, Optional
+from api.models import Chunk
 
 
 class ChunkingService:
@@ -23,92 +25,55 @@ class ChunkingService:
     def chunk_text(
         self,
         text: str,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        metadata: Optional[dict[str, Any]] = None
+    ) -> list[Chunk]:
         """Chunk text into fixed-size segments with overlap.
-        
-        Args:
-            text: Text content to chunk
-            metadata: Optional metadata to attach to each chunk
-        
-        Returns:
-            List[Dict[str, Any]]: List of chunk dictionaries with:
-                - text: Chunk text content
-                - chunk_index: Position of chunk (0-indexed)
-                - start_char: Starting character position in original text
-                - end_char: Ending character position in original text
-                - metadata: Chunk metadata (merged with input metadata)
-        
-        Raises:
-            ValueError: If text is empty or chunk_size <= 0
-        """
-        pass
 
-    def chunk_text_by_sentences(
-        self,
-        text: str,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Chunk text by sentences, respecting chunk_size limits.
-        
-        Attempts to break at sentence boundaries while maintaining
-        approximate chunk_size. Overlaps at sentence boundaries.
-        
         Args:
             text: Text content to chunk
             metadata: Optional metadata to attach to each chunk
-        
-        Returns:
-            List[Dict[str, Any]]: List of chunk dictionaries (same format as chunk_text)
-        
-        Raises:
-            ValueError: If text is empty or chunk_size <= 0
-        """
-        pass
 
-    def chunk_text_by_paragraphs(
-        self,
-        text: str,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Chunk text by paragraphs, respecting chunk_size limits.
-        
-        Attempts to break at paragraph boundaries while maintaining
-        approximate chunk_size. Overlaps at paragraph boundaries.
-        
-        Args:
-            text: Text content to chunk
-            metadata: Optional metadata to attach to each chunk
-        
         Returns:
-            List[Dict[str, Any]]: List of chunk dictionaries (same format as chunk_text)
-        
-        Raises:
-            ValueError: If text is empty or chunk_size <= 0
-        """
-        pass
+            list[Chunk]: A list of chunks model.
 
-    def chunk_with_semantic_boundaries(
-        self,
-        text: str,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Chunk text using semantic boundaries (sentences/paragraphs) when possible.
-        
-        Falls back to fixed-size chunking if semantic boundaries don't align
-        with chunk_size constraints.
-        
-        Args:
-            text: Text content to chunk
-            metadata: Optional metadata to attach to each chunk
-        
-        Returns:
-            List[Dict[str, Any]]: List of chunk dictionaries (same format as chunk_text)
-        
         Raises:
-            ValueError: If text is empty or chunk_size <= 0
+            ValueError: If text is empty, chunk_size <= 0 or chunk_overlap >= chunk_size
         """
-        pass
+        if not text:
+            raise ValueError("Text cannot be empty.")
+        if self.chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than 0.")
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be strictly less than chunk_size.")
+
+        chunks: list[Chunk] = []
+        text_length = len(text)
+        base_metadata = metadata or {}
+
+        step = self.chunk_size - self.chunk_overlap
+
+        start = 0
+        chunk_index = 0
+
+        while start < text_length:
+            end = min(start + self.chunk_size, text_length)
+
+            chunk = Chunk(
+                text=text[start:end],
+                chunk_index=chunk_index,
+                start_char=start,
+                end_char=end,
+                metadata=base_metadata.copy()
+            )
+            chunks.append(chunk)
+
+            if end == text_length:
+                break
+
+            start += step
+            chunk_index += 1
+
+        return chunks
 
     def set_chunk_size(self, chunk_size: int) -> None:
         """Update chunk size parameter.
@@ -119,7 +84,9 @@ class ChunkingService:
         Raises:
             ValueError: If chunk_size <= 0
         """
-        pass
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than 0.")
+        self.chunk_size = chunk_size
 
     def set_chunk_overlap(self, chunk_overlap: int) -> None:
         """Update chunk overlap parameter.
@@ -130,23 +97,45 @@ class ChunkingService:
         Raises:
             ValueError: If chunk_overlap < 0 or >= chunk_size
         """
-        pass
+        if chunk_overlap < 0:
+            raise ValueError("chunk_overlap must not be negative.")
+        if chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be strictly less than chunk_size.")
+        self.chunk_overlap = chunk_overlap
 
-    def get_chunk_statistics(
-        self,
-        chunks: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    @staticmethod
+    def get_chunk_statistics(chunks: list[Chunk]) -> dict[str, Any]:
         """Get statistics about a list of chunks.
-        
+
         Args:
-            chunks: List of chunk dictionaries
-        
+            chunks: list of chunk models.
+
         Returns:
-            Dict[str, Any]: Statistics including:
+            dict[str, Any]: Statistics including:
                 - total_chunks: Number of chunks
                 - avg_chunk_size: Average chunk size in characters
                 - min_chunk_size: Minimum chunk size
                 - max_chunk_size: Maximum chunk size
                 - total_characters: Total characters across all chunks
         """
-        pass
+        if not chunks:
+            return {
+                "total_chunks": 0,
+                "avg_chunk_size": 0.0,
+                "min_chunk_size": 0,
+                "max_chunk_size": 0,
+                "total_characters": 0
+            }
+
+        chunk_lengths = [len(chunk.text) for chunk in chunks]
+
+        total_chunks = len(chunks)
+        total_characters = sum(chunk_lengths)
+
+        return {
+            "total_chunks": total_chunks,
+            "avg_chunk_size": total_characters / total_chunks,
+            "min_chunk_size": min(chunk_lengths),
+            "max_chunk_size": max(chunk_lengths),
+            "total_characters": total_characters
+        }
