@@ -2,7 +2,6 @@
 name = "in-smart-api"
 version = "0.1.0"
 description = "IN'SMART FastAPI backend"
-readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.104.0",
@@ -45,3 +44,6 @@ target-version = ["py310"]
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["eval", "processing", "services", "storage", "main.py"]
