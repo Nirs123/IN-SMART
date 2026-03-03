@@ -18,7 +18,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 @pytest.fixture
 def api_key() -> str:
-    """Récupère la vraie clé API depuis l'environnement."""
+    """Retrieves the actual API key from the environment."""
     key = os.environ.get("MISTRAL_API_KEY")
     if not key:
         pytest.skip("MISTRAL_API_KEY non définie, test d'intégration ignoré")
@@ -30,7 +30,7 @@ def llm_service(api_key: str) -> LLMService:
 
 @pytest.fixture
 def initialized_llm_service(llm_service: LLMService) -> LLMService:
-    """Service déjà initialisé avec un client mocké."""
+    """Service already initialized with a mocked client."""
     llm_service.client = MagicMock()
     return llm_service
 
