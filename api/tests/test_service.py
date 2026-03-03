@@ -213,10 +213,9 @@ class TestIngestionService:
 
 
 class TestLLMService:
-    
+    """Test cases for LLMService."""
     def test_initialize(self, api_key: str) -> None:
-        """Test l'initialisation et la création du client."""
-        # On mock la classe Mistral importée dans api.services.llm
+        """Test the initialization and creation of the client."""
         with patch("api.services.llm.Mistral") as mock_mistral:
             service = LLMService(api_key=api_key)
             service.initialize()
@@ -225,22 +224,20 @@ class TestLLMService:
             assert service.client is not None
 
     def test_generate_response(self, initialized_llm_service: LLMService) -> None:
-        """Test la génération de réponse via le client mocké."""
-        # Préparation du mock de réponse
+        """Testing response generation via the mocked client."""
         mock_response = MagicMock()
         mock_response.text = "Hello! How can I help you?"
         initialized_llm_service.client.chat.complete.return_value = mock_response
 
         result = initialized_llm_service.generate_response("Hello")
 
-        # Vérifications
         assert result.text == "Hello! How can I help you?"
         initialized_llm_service.client.chat.complete.assert_called_once()
 
     def test_format_messages(self, llm_service: LLMService) -> None:
-        """Test le formatage des messages (system + user)."""
-        user_msg = "Quelle heure est-il ?"
-        sys_prompt = "Tu es un assistant utile."
+        """Test the message formatting (system + user)."""
+        user_msg = "What time is it ?"
+        sys_prompt = "You are a helpful assistant"
         
         messages = llm_service.format_messages(user_msg, system_prompt=sys_prompt)
         
@@ -249,10 +246,12 @@ class TestLLMService:
         assert messages[1] == {"role": "user", "content": user_msg}
 
     def test_format_messages_no_system(self, llm_service: LLMService) -> None:
-        """Test le formatage sans system prompt."""
+        """Test the formatting without a system prompt."""
         messages = llm_service.format_messages("Bonjour")
         assert len(messages) == 1
         assert messages[0]["role"] == "user"
+
+
 class TestRetrievalService:
     """Test cases for RetrievalService."""
 
