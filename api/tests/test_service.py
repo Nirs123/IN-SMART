@@ -8,6 +8,8 @@ from api.services.embeddings import EmbeddingService
 from api.services.ingestion import IngestionService
 from api.services.llm import LLMService
 from api.services.retrieval import RetrievalService
+from api.models import Chunk
+
 from unittest.mock import MagicMock, patch
 from api.services.llm import LLMService
 from pathlib import Path 
@@ -22,7 +24,6 @@ def api_key() -> str:
         pytest.skip("MISTRAL_API_KEY non définie, test d'intégration ignoré")
     return key
 
-
 @pytest.fixture
 def llm_service(api_key: str) -> LLMService:
     return LLMService(api_key=api_key)
@@ -36,54 +37,96 @@ def initialized_llm_service(llm_service: LLMService) -> LLMService:
 class TestChunkingService:
     """Test cases for ChunkingService."""
 
-    def test_chunk_text(self) -> None:
-        """Test basic text chunking.
-        
-        Should:
-        - Chunk text into fixed-size segments
-        - Apply overlap between chunks
-        - Return chunks with metadata
-        """
-        pass
+    # chunk_text tests
+    def test_chunk_text_basic(self) -> None:
+        """Test basic text chunking with default parameters."""
+        service = ChunkingService(chunk_size=100, chunk_overlap=20)
+        text = "a" * 250  # 250 characters
 
-    def test_chunk_text_by_sentences(self) -> None:
-        """Test sentence-based chunking.
-        
-        Should:
-        - Break at sentence boundaries
-        - Respect chunk_size limits
-        - Apply overlap at boundaries
-        """
-        pass
+        chunks = service.chunk_text(text)
 
-    def test_chunk_text_by_paragraphs(self) -> None:
-        """Test paragraph-based chunking.
-        
-        Should:
-        - Break at paragraph boundaries
-        - Respect chunk_size limits
-        - Apply overlap at boundaries
-        """
-        pass
+        # With chunk_size=100 and overlap=20
+        # Chunks: 0-100, 80-180, 160-250
+        assert len(chunks) == 3
+        assert chunks[0].text == "a" * 100
+        assert chunks[0].start_char == 0
+        assert chunks[0].end_char == 100
+        assert chunks[0].chunk_index == 0
 
-    def test_set_chunk_size(self) -> None:
-        """Test updating chunk size.
-        
-        Should:
-        - Update chunk_size parameter
-        - Validate input
-        """
-        pass
+    def test_chunk_text_with_overlap(self) -> None:
+        """Test that chunks overlap correctly."""
+        service = ChunkingService(chunk_size=100, chunk_overlap=30)
+        text = "a" * 200
 
-    def test_set_chunk_overlap(self) -> None:
-        """Test updating chunk overlap.
-        
-        Should:
-        - Update chunk_overlap parameter
-        - Validate input
-        """
-        pass
+        chunks = service.chunk_text(text)
 
+        # Verify overlap: each chunk should start 70 chars after the previous
+        # First chunk: 0-100, second chunk: 70-170, third chunk: 140-200
+        assert len(chunks) == 3
+        assert chunks[1].start_char == 70  # 100 - 30 = 70 overlap
+        assert chunks[0].end_char == 100
+        # Verify overlap content
+        assert chunks[0].text[-30:] == chunks[1].text[:30]
+
+    def test_chunk_text_shorter_than_chunk_size(self) -> None:
+        """Test chunking text shorter than chunk_size returns single chunk."""
+        service = ChunkingService(chunk_size=100, chunk_overlap=20)
+        text = "short text"
+
+        chunks = service.chunk_text(text)
+
+        assert len(chunks) == 1
+        assert chunks[0].text == "short text"
+        assert chunks[0].start_char == 0
+        assert chunks[0].end_char == len(text)
+
+    def test_chunk_text_exact_multiple(self) -> None:
+        """Test chunking text that is exact multiple of chunk_size."""
+        service = ChunkingService(chunk_size=100, chunk_overlap=0)
+        text = "a" * 300  # Exactly 3 chunks
+
+        chunks = service.chunk_text(text)
+
+        assert len(chunks) == 3
+        assert chunks[0].text == "a" * 100
+        assert chunks[1].text == "a" * 100
+        assert chunks[2].text == "a" * 100
+
+    def test_chunk_text_with_metadata(self) -> None:
+        """Test that metadata is attached to each chunk."""
+        service = ChunkingService(chunk_size=50, chunk_overlap=10)
+        text = "a" * 100
+        metadata = {"source": "test", "page": 1}
+
+        chunks = service.chunk_text(text, metadata)
+
+        # With chunk_size=50 and overlap=10
+        # Chunks: 0-50, 40-90, 80-100
+        assert len(chunks) == 3
+        for chunk in chunks:
+            assert chunk.metadata == {"source": "test", "page": 1}
+
+    def test_chunk_text_empty_raises_error(self) -> None:
+        """Test that empty text raises ValueError."""
+        service = ChunkingService()
+
+        with pytest.raises(ValueError, match="Text cannot be empty"):
+            service.chunk_text("")
+
+    def test_chunk_text_invalid_chunk_size(self) -> None:
+        """Test that invalid chunk_size raises ValueError."""
+        service = ChunkingService(chunk_size=100, chunk_overlap=20)
+        service.chunk_size = 0  # Manually set invalid value
+
+        with pytest.raises(ValueError, match="chunk_size must be greater than 0"):
+            service.chunk_text("some text")
+
+    def test_chunk_text_invalid_overlap(self) -> None:
+        """Test that overlap >= chunk_size raises ValueError."""
+        service = ChunkingService(chunk_size=50, chunk_overlap=60)
+
+        with pytest.raises(ValueError, match="chunk_overlap must be strictly less than chunk_size"):
+            service.chunk_text("some text")
 
 class TestEmbeddingService:
     """Test cases for EmbeddingService."""
