@@ -2,7 +2,6 @@
 name = "in-smart-api"
 version = "0.1.0"
 description = "IN'SMART FastAPI backend"
-readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.104.0",
@@ -17,6 +16,7 @@ dependencies = [
     "pdfplumber>=0.10.0",
     "httpx>=0.25.0",
     "python-dotenv>=1.0.0",
+    "pytest>=9.0.2",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +28,9 @@ dev = [
     "ruff>=0.1.6",
     "mypy>=1.7.0",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["eval", "processing", "services", "storage", "main.py"]
 
 [build-system]
 requires = ["hatchling"]

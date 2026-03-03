@@ -28,12 +28,15 @@ class LLMService:
         Raises:
             ValueError: If API key is invalid or client initialization fails
         """
-        pass
+        self.client = Mistral(self.api_key)
+        if not self.client:
+            raise ValueError("Failed to initialize Mistral client")
+        else:
+            print("Mistral client initialized")
 
     def generate_response(
         self,
         user_message: str,
-        context: Optional[str] = None,
         system_prompt: Optional[str] = None
     ) -> Dict[str, Any]:
         """Generate response using LLM with optional context.
@@ -52,12 +55,16 @@ class LLMService:
         Raises:
             ValueError: If generation fails
         """
-        pass
+        messages = self.format_messages(user_message, system_prompt)
+        response = self.client.chat.complete(messages=messages, model = self.model)
+        if not response:
+            raise ValueError("Failed to generate response")
+        else:
+            return response
 
     def format_messages(
         self,
         user_message: str,
-        context: Optional[str] = None,
         system_prompt: Optional[str] = None
     ) -> List[Dict[str, str]]:
         """Format messages for Mistral API.
@@ -70,4 +77,12 @@ class LLMService:
         Returns:
             List[Dict[str, str]]: List of message dictionaries with 'role' and 'content'
         """
-        pass
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_message})
+        return messages
+    
+
+
+print('test')
