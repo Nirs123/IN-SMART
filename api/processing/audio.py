@@ -1,10 +1,8 @@
 """Audio processing module for Speech-to-Text (STT)."""
 
-import base64
 import io
-from base64 import b64encode
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mistralai import Mistral
 
@@ -12,7 +10,9 @@ from mistralai import Mistral
 class AudioProcessor:
     """Audio processor using Mistral API for STT."""
 
-    def __init__(self, api_key: str, model: str = "whisper-large-v3") -> None:
+    SUPPORTED_FORMATS: List[str] = ["mp3", "wav", "flac", "ogg", "m4a", "webm"]
+
+    def __init__(self, api_key: str, model: str = "voxtral-mini-latest") -> None:
         """Initialize audio processor.
 
         Args:
@@ -29,8 +29,10 @@ class AudioProcessor:
         Raises:
             ValueError: If API key is invalid or client initialization fails
         """
-        model = "voxtral-mini-latest"
-        self.client = Mistral(api_key=self.api_key, model=model)
+        try:
+            self.client = Mistral(api_key=self.api_key)
+        except Exception as e:
+            raise ValueError(f"Failed to initialize Mistral client: {e}")
 
     def transcribe_file(
         self, audio_file_path: str, language: Optional[str] = None
@@ -54,28 +56,48 @@ class AudioProcessor:
         """
         if not self.client:
             raise ValueError("Mistral client not initialized. Call initialize() first.")
-        if not Path(audio_file_path).is_file():
-            raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
-        file_name = Path(audio_file_path).name
-        with open(audio_file_path, "rb") as f:
-            transcription_response = self.client.audio.transcriptions.complete(
-                model=self.model,
-                file={
-                    "content": f,
-                    "file_name": file_name,
-                },
-                language="fr",
-            )
 
-        return {
-            "text": transcription_response.text,
-            "language": transcription_response.language,
-            "duration": transcription_response.duration,
-            "confidence": transcription_response.confidence,
-        }
+        path = Path(audio_file_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
+
+        if not self.validate_audio_file(audio_file_path):
+            raise ValueError(f"Unsupported or invalid audio file: {audio_file_path}")
+
+        file_name = path.name
+
+        try:
+            with open(audio_file_path, "rb") as f:
+                kwargs: Dict[str, Any] = {
+                    "model": self.model,
+                    "file": {
+                        "content": f,
+                        "file_name": file_name,
+                    },
+                }
+                if language:
+                    kwargs["language"] = language
+
+                response = self.client.audio.transcriptions.complete(**kwargs)
+
+            return {
+                "text": getattr(response, "text", ""),
+                "language": getattr(response, "language", language),
+                "duration": getattr(response, "duration", None),
+                "confidence": getattr(response, "confidence", None),
+            }
+        except FileNotFoundError:
+            raise
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Transcription failed: {e}")
 
     def transcribe_bytes(
-        self, audio_data: bytes, file_extension: str = "mp3", language: Optional[str] = None
+        self,
+        audio_data: bytes,
+        file_extension: str = "mp3",
+        language: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Transcribe audio from bytes using STT.
 
@@ -90,7 +112,42 @@ class AudioProcessor:
         Raises:
             ValueError: If transcription fails or unsupported format
         """
-        pass
+        if not self.client:
+            raise ValueError("Mistral client not initialized. Call initialize() first.")
+
+        ext = file_extension.lstrip(".").lower()
+        if ext not in self.SUPPORTED_FORMATS:
+            raise ValueError(f"Unsupported audio format: {ext}")
+
+        if not audio_data:
+            raise ValueError("Audio data is empty")
+
+        file_name = f"audio.{ext}"
+
+        try:
+            kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "file": {
+                    "content": audio_data,
+                    "file_name": file_name,
+                },
+            }
+            if language:
+                kwargs["language"] = language
+
+            response = self.client.audio.transcriptions.complete(**kwargs)
+
+            return {
+                "text": getattr(response, "text", ""),
+                "language": getattr(response, "language", language),
+                "duration": getattr(response, "duration", None),
+                "confidence": getattr(response, "confidence", None),
+            }
+        except ValueError as e:
+            print(e)
+            raise
+        except Exception as e:
+            raise ValueError(f"Transcription from bytes failed: {e}")
 
     def transcribe_stream(
         self, audio_stream: io.BytesIO, language: Optional[str] = None
@@ -107,15 +164,27 @@ class AudioProcessor:
         Raises:
             ValueError: If transcription fails
         """
-        pass
+        if not self.client:
+            raise ValueError("Mistral client not initialized. Call initialize() first.")
 
-    def get_supported_formats(self) -> list[str]:
+        try:
+            audio_stream.seek(0)
+            audio_data = audio_stream.read()
+        except Exception as e:
+            raise ValueError(f"Failed to read audio stream: {e}")
+
+        if not audio_data:
+            raise ValueError("Audio stream is empty")
+
+        return self.transcribe_bytes(audio_data, file_extension="wav", language=language)
+
+    def get_supported_formats(self) -> List[str]:
         """Get list of supported audio formats.
 
         Returns:
             list[str]: List of supported file extensions (e.g., ['mp3', 'wav', 'm4a'])
         """
-        pass
+        return list(self.SUPPORTED_FORMATS)
 
     def validate_audio_file(self, file_path: str) -> bool:
         """Validate if audio file is supported and readable.
@@ -126,7 +195,19 @@ class AudioProcessor:
         Returns:
             bool: True if file is valid, False otherwise
         """
-        pass
+        path = Path(file_path)
+
+        if not path.is_file():
+            return False
+
+        ext = path.suffix.lstrip(".").lower()
+        if ext not in self.SUPPORTED_FORMATS:
+            return False
+
+        if path.stat().st_size == 0:
+            return False
+
+        return True
 
     def get_audio_metadata(self, file_path: str) -> Dict[str, Any]:
         """Extract metadata from audio file.
@@ -146,3 +227,64 @@ class AudioProcessor:
             FileNotFoundError: If file doesn't exist
             ValueError: If metadata extraction fails
         """
+        file = Path(file_path)
+        if not file.is_file():
+            raise FileNotFoundError(f"Audio file not found: {file_path}")
+
+        try:
+            import mutagen
+            from mutagen.flac import FLAC
+            from mutagen.mp3 import MP3
+            from mutagen.mp4 import MP4
+            from mutagen.oggvorbis import OggVorbis
+            from mutagen.wave import WAVE
+
+            suffix = file.suffix.lower()
+
+            handler_map = {
+                ".mp3": MP3,
+                ".flac": FLAC,
+                ".ogg": OggVorbis,
+                ".wav": WAVE,
+                ".m4a": MP4,
+                ".mp4": MP4,
+                ".aac": MP4,
+            }
+
+            handler = handler_map.get(suffix)
+            if handler:
+                audio = handler(str(file))
+            else:
+                audio = mutagen.File(str(file))
+
+            if audio is None:
+                raise ValueError(f"Unable to read metadata from: {file_path}")
+
+            metadata: Dict[str, Any] = {
+                "duration": None,
+                "format": suffix.lstrip("."),
+                "sample_rate": None,
+                "channels": None,
+                "bitrate": None,
+            }
+
+            if hasattr(audio, "info") and audio.info is not None:
+                info = audio.info
+                if hasattr(info, "length"):
+                    metadata["duration"] = round(info.length, 2)
+                metadata["sample_rate"] = getattr(info, "sample_rate", None)
+                metadata["channels"] = getattr(info, "channels", None)
+
+                bitrate = getattr(info, "bitrate", None)
+                if bitrate is not None:
+                    # mutagen returns bitrate in bps, convert to kbps
+                    metadata["bitrate"] = round(bitrate / 1000) if bitrate > 1000 else bitrate
+
+            return metadata
+
+        except FileNotFoundError:
+            raise
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Failed to extract metadata from '{file_path}': {e}")

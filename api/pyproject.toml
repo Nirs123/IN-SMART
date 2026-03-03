@@ -2,7 +2,6 @@
 name = "in-smart-api"
 version = "0.1.0"
 description = "IN'SMART FastAPI backend"
-readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.104.0",
@@ -17,6 +16,8 @@ dependencies = [
     "pdfplumber>=0.10.0",
     "httpx>=0.25.0",
     "python-dotenv>=1.0.0",
+    "mutagen>=1.47.0",
+    "typing>=3.10.0.0",
 ]
 
 [project.optional-dependencies]
@@ -45,3 +46,6 @@ target-version = ["py310"]
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["eval", "processing", "services", "storage", "main.py"]
