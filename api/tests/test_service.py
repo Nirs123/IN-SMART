@@ -1,6 +1,8 @@
 """Tests for service modules."""
 
 import pytest
+import os
+from dotenv import load_dotenv
 from api.services.chunking import ChunkingService
 from api.services.embeddings import EmbeddingService
 from api.services.ingestion import IngestionService
@@ -8,6 +10,29 @@ from api.services.llm import LLMService
 from api.services.retrieval import RetrievalService
 from api.models import Chunk
 
+from unittest.mock import MagicMock, patch
+from api.services.llm import LLMService
+from pathlib import Path 
+
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+@pytest.fixture
+def api_key() -> str:
+    """Récupère la vraie clé API depuis l'environnement."""
+    key = os.environ.get("MISTRAL_API_KEY")
+    if not key:
+        pytest.skip("MISTRAL_API_KEY non définie, test d'intégration ignoré")
+    return key
+
+@pytest.fixture
+def llm_service(api_key: str) -> LLMService:
+    return LLMService(api_key=api_key)
+
+@pytest.fixture
+def initialized_llm_service(llm_service: LLMService) -> LLMService:
+    """Service déjà initialisé avec un client mocké."""
+    llm_service.client = MagicMock()
+    return llm_service
 
 class TestChunkingService:
     """Test cases for ChunkingService."""
@@ -189,35 +214,42 @@ class TestIngestionService:
 
 class TestLLMService:
     """Test cases for LLMService."""
+    def test_initialize(self, api_key: str) -> None:
+        """Test the initialization and creation of the client."""
+        with patch("api.services.llm.Mistral") as mock_mistral:
+            service = LLMService(api_key=api_key)
+            service.initialize()
+            
+            mock_mistral.assert_called_once_with(api_key)
+            assert service.client is not None
 
-    def test_initialize(self) -> None:
-        """Test LLMService initialization.
-        
-        Should:
-        - Initialize with API key and model
-        - Create Mistral client
-        """
-        pass
+    def test_generate_response(self, initialized_llm_service: LLMService) -> None:
+        """Testing response generation via the mocked client."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello! How can I help you?"
+        initialized_llm_service.client.chat.complete.return_value = mock_response
 
-    def test_generate_response(self) -> None:
-        """Test response generation.
-        
-        Should:
-        - Generate response with context
-        - Return formatted response
-        - Include source citations
-        """
-        pass
+        result = initialized_llm_service.generate_response("Hello")
 
-    def test_format_rag_prompt(self) -> None:
-        """Test RAG prompt formatting.
+        assert result.text == "Hello! How can I help you?"
+        initialized_llm_service.client.chat.complete.assert_called_once()
+
+    def test_format_messages(self, llm_service: LLMService) -> None:
+        """Test the message formatting (system + user)."""
+        user_msg = "What time is it ?"
+        sys_prompt = "You are a helpful assistant"
         
-        Should:
-        - Format prompt with context
-        - Include user message
-        - Add system prompt if provided
-        """
-        pass
+        messages = llm_service.format_messages(user_msg, system_prompt=sys_prompt)
+        
+        assert len(messages) == 2
+        assert messages[0] == {"role": "system", "content": sys_prompt}
+        assert messages[1] == {"role": "user", "content": user_msg}
+
+    def test_format_messages_no_system(self, llm_service: LLMService) -> None:
+        """Test the formatting without a system prompt."""
+        messages = llm_service.format_messages("Bonjour")
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
 
 
 class TestRetrievalService:
