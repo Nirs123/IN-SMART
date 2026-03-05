@@ -3,7 +3,34 @@
 import pytest
 from api.storage.vector_store import VectorStore
 from api.storage.file_store import FileStore
+import io
+import os
+import pytest
+from dotenv import load_dotenv
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+from minio.error import S3Error
+from typing import Any
 
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+@pytest.fixture
+def store_config() -> dict[str, str]:
+    return {
+        "endpoint": os.environ.get("MINIO_ENDPOINT"),
+        "access_key": os.environ.get("MINIO_ACCESS_KEY"),
+        "secret_key": os.environ.get("MINIO_SECRET_KEY"),
+        "bucket_name":  os.environ.get("MINIO_BUCKET_NAME"),
+    }
+
+@pytest.fixture
+def file_store(store_config: dict[str, str]) -> "FileStore":
+    return FileStore(**store_config)
+
+@pytest.fixture
+def initialized_store(file_store: "FileStore") -> "FileStore":
+    file_store.client = MagicMock()
+    return file_store
 
 class TestVectorStore:
     """Test cases for VectorStore."""
@@ -78,77 +105,125 @@ class TestVectorStore:
 class TestFileStore:
     """Test cases for FileStore."""
 
-    def test_connect(self) -> None:
-        """Test MinIO connection.
+    @patch("api.storage.file_store.Minio") 
+    def test_connect(self, mock_minio_class: MagicMock, store_config: dict[str, str]) -> None:
+        """Test MinIO connection."""
+        mock_client = MagicMock()
+        mock_minio_class.return_value = mock_client
         
-        Should:
-        - Connect to MinIO server
-        - Create bucket if needed
-        """
-        pass
+        mock_new_bucket = MagicMock()
+        mock_new_bucket.name = store_config["bucket_name"]
 
-    def test_create_bucket(self) -> None:
-        """Test bucket creation.
-        
-        Should:
-        - Create bucket if it doesn't exist
-        - Handle existing buckets gracefully
-        """
-        pass
 
-    def test_upload_file(self) -> None:
-        """Test file upload.
+        mock_client.list_buckets.side_effect = [
+            [],
+            [],
+            [mock_new_bucket]
+        ]
         
-        Should:
-        - Upload file to MinIO
-        - Store metadata
-        - Return object name
-        """
-        pass
+        store = FileStore(**store_config)
+        store.connect()
 
-    def test_download_file(self) -> None:
-        """Test file download.
-        
-        Should:
-        - Download file from MinIO
-        - Return file content as bytes
-        - Handle missing files
-        """
-        pass
+        mock_minio_class.assert_called_once_with(
+            store_config["endpoint"],
+            access_key=store_config["access_key"],
+            secret_key=store_config["secret_key"],
+            secure=False
+        )
+        mock_client.make_bucket.assert_called_once_with(store_config["bucket_name"])
 
-    def test_delete_file(self) -> None:
-        """Test file deletion.
-        
-        Should:
-        - Delete file from MinIO
-        - Handle missing files gracefully
-        """
-        pass
+    def test_create_bucket(self, initialized_store: "FileStore") -> None:
+            """Test bucket creation."""
+            mock_bucket = MagicMock()
+            mock_bucket.name = "other-bucket"
+            
 
-    def test_get_file_metadata(self) -> None:
-        """Test metadata retrieval.
+            mock_new_bucket = MagicMock()
+            mock_new_bucket.name = initialized_store.bucket_name
+            
+            initialized_store.client.list_buckets.side_effect = [
+                [mock_bucket],                    
+                [mock_bucket, mock_new_bucket]    
+            ]
+            
+            initialized_store.create_bucket()
+            initialized_store.client.make_bucket.assert_called_once_with(initialized_store.bucket_name)
+    def test_upload_file(self, initialized_store: "FileStore") -> None:
+        """Test file upload."""
+        file_data = io.BytesIO(b"dummy data")
+        object_name = "test.txt"
         
-        Should:
-        - Get file metadata
-        - Return size, content_type, etc.
-        """
-        pass
+        mock_result = MagicMock()
+        mock_result.object_name = object_name
+        initialized_store.client.put_object.return_value = mock_result
+        
+        result = initialized_store.upload_file(
+            file_data=file_data,
+            object_name=object_name,
+            content_type="text/plain"
+        )
+        
+        assert result == object_name
+        initialized_store.client.put_object.assert_called_once()
+        kwargs = initialized_store.client.put_object.call_args.kwargs
+        assert "last_modified" in kwargs["metadata"]
 
-    def test_list_files(self) -> None:
-        """Test file listing.
+    @patch.object(FileStore, 'file_exists', return_value=True)
+    def test_download_file(self, mock_exists: MagicMock, initialized_store: "FileStore") -> None:
+        """Test file download."""
+        mock_result = MagicMock()
+        mock_result.data = b"file content"
+        initialized_store.client.get_object.return_value = mock_result
         
-        Should:
-        - List files in bucket
-        - Filter by prefix if provided
-        - Handle recursive listing
-        """
-        pass
+        result = initialized_store.download_file("test.txt")
+        
+        assert result == b"file content"
+        initialized_store.client.get_object.assert_called_once_with(
+            initialized_store.bucket_name,
+            "test.txt"
+        )
 
-    def test_file_exists(self) -> None:
-        """Test file existence check.
+    @patch.object(FileStore, 'file_exists', return_value=True)
+    def test_delete_file(self, mock_exists: MagicMock, initialized_store: "FileStore") -> None:
+        """Test file deletion."""
+        initialized_store.delete_file("test.txt")
         
-        Should:
-        - Check if file exists
-        - Return boolean result
-        """
-        pass
+        initialized_store.client.remove_object.assert_called_once_with(
+            initialized_store.bucket_name,
+            "test.txt"
+        )
+
+    @patch.object(FileStore, 'file_exists', return_value=True)
+    def test_get_file_metadata(self, mock_exists: MagicMock, initialized_store: "FileStore") -> None:
+        """Test metadata retrieval."""
+        mock_result = MagicMock()
+        mock_result.metadata = {"custom": "data"}
+        initialized_store.client.stat_object.return_value = mock_result
+        
+        result = initialized_store.get_file_metadata("test.txt")
+        
+        assert result == {"custom": "data"}
+
+    def test_list_files(self, initialized_store: "FileStore") -> None:
+        """Test file listing."""
+        mock_obj1 = MagicMock()
+        mock_obj1.object_name = "file1.txt"
+        initialized_store.client.list_objects.return_value = [mock_obj1]
+        
+        result = initialized_store.list_files(prefix="file", recursive=True)
+        
+        assert result == [mock_obj1]
+        initialized_store.client.list_objects.assert_called_once_with(
+            initialized_store.bucket_name,
+            prefix="file",
+            recursive=True
+        )
+
+    def test_file_exists(self, initialized_store: "FileStore") -> None:
+        """Test file existence check."""
+        initialized_store.client.stat_object.return_value = MagicMock()
+        assert initialized_store.file_exists("test.txt") is True
+
+        initialized_store.client.stat_object.side_effect = Exception("Not found")
+        with pytest.raises(S3Error):
+            initialized_store.file_exists("missing.txt")
