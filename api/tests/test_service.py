@@ -1,5 +1,9 @@
 """Tests for service modules."""
 
+import math
+
+from requests import Response
+
 import pytest
 import os
 from dotenv import load_dotenv
@@ -9,7 +13,7 @@ from api.services.ingestion import IngestionService
 from api.services.llm import LLMService
 from api.services.retrieval import RetrievalService
 from api.models import Chunk
-
+from mistralai import MistralError
 from unittest.mock import MagicMock, patch
 from api.services.llm import LLMService
 from pathlib import Path 
@@ -33,6 +37,16 @@ def initialized_llm_service(llm_service: LLMService) -> LLMService:
     """Service already initialized with a mocked client."""
     llm_service.client = MagicMock()
     return llm_service
+
+@pytest.fixture
+def embeddings_service(api_key: str) -> EmbeddingService:
+    return EmbeddingService(api_key=api_key)
+
+@pytest.fixture
+def initialized_embeddings_service(embeddings_service: EmbeddingService) -> EmbeddingService:
+    """Service already initialized with a mocked client."""
+    embeddings_service.client = MagicMock()
+    return embeddings_service
 
 class TestChunkingService:
     """Test cases for ChunkingService."""
@@ -132,41 +146,77 @@ class TestEmbeddingService:
     """Test cases for EmbeddingService."""
 
     def test_initialize(self) -> None:
-        """Test EmbeddingService initialization.
-        
-        Should:
-        - Initialize with API key and model
-        - Create Mistral client
-        """
-        pass
+        with patch("api.services.embeddings.Mistral") as mock_mistral:
+            service = EmbeddingService(api_key=api_key)
+            
+            mock_mistral.assert_called_once_with(api_key)
+            assert service.client is not None
 
-    def test_generate_embedding(self) -> None:
-        """Test single embedding generation.
-        
-        Should:
-        - Generate embedding for text
-        - Return vector of correct dimension
-        """
-        pass
+    def test_generate_embedding(self, initialized_embeddings_service: EmbeddingService) -> None:
+        expected = [0.1, 0.2, 0.3]
+        response = MagicMock()
+        response.data = [MagicMock(embedding=expected)]
+        initialized_embeddings_service.client.embeddings.create.return_value = response
+        result = initialized_embeddings_service.generate_embedding("bonjour")
 
-    def test_generate_embeddings(self) -> None:
-        """Test batch embedding generation.
-        
-        Should:
-        - Generate embeddings for multiple texts
-        - Handle batching correctly
-        - Return list of embeddings
-        """
-        pass
+        assert result == expected
 
-    def test_compute_similarity(self) -> None:
-        """Test similarity computation.
+    def test_raises_on_mistral_error(self, initialized_embeddings_service: EmbeddingService):
         
-        Should:
-        - Compute cosine similarity
-        - Return value between -1 and 1
-        """
-        pass
+        initialized_embeddings_service.client.embeddings.create.side_effect = MistralError("API down", Response())
+
+        with pytest.raises(ValueError, match="Erreur lors de l'appel à l'API Mistral"):
+            initialized_embeddings_service.generate_embedding("text")
+
+    def test_empty_string(self, initialized_embeddings_service: EmbeddingService):
+        with pytest.raises(ValueError, match="Le texte ne doit pas être vide"):
+            initialized_embeddings_service.generate_embedding("")
+
+    def test_identical_vectors_return_one(self, embeddings_service : EmbeddingService):
+        v = [1.0, 2.0, 3.0]
+        assert embeddings_service.compute_similarity(v, v) == pytest.approx(1.0)
+
+    def test_orthogonal_vectors_return_zero(self, embeddings_service : EmbeddingService):
+        v1 = [1.0, 0.0]
+        v2 = [0.0, 1.0]
+        assert embeddings_service.compute_similarity(v1, v2) == pytest.approx(0.0)
+
+    def test_opposite_vectors_return_minus_one(self, embeddings_service : EmbeddingService):
+        v1 = [1.0, 0.0]
+        v2 = [-1.0, 0.0]
+        assert embeddings_service.compute_similarity(v1, v2) == pytest.approx(-1.0)
+
+    def test_known_similarity(self, embeddings_service : EmbeddingService):
+        v1 = [1.0, 1.0]
+        v2 = [1.0, 0.0]
+        expected = 1 / math.sqrt(2)
+        assert embeddings_service.compute_similarity(v1, v2) == pytest.approx(expected)
+
+    def test_zero_vector_returns_zero(self, embeddings_service : EmbeddingService):
+        v1 = [0.0, 0.0]
+        v2 = [1.0, 2.0]
+        assert embeddings_service.compute_similarity(v1, v2) == 0.0
+
+    def test_both_zero_vectors_return_zero(self, embeddings_service : EmbeddingService):
+        v1 = [0.0, 0.0]
+        assert embeddings_service.compute_similarity(v1, v1) == 0.0
+
+    def test_different_dimensions_raise(self, embeddings_service : EmbeddingService):
+        with pytest.raises(ValueError, match="Les embeddings doivent avoir la même dimension."):
+            embeddings_service.compute_similarity([1.0, 2.0], [1.0])
+
+    def test_symmetry(self, embeddings_service : EmbeddingService):
+        v1 = [0.5, 0.3, 0.8]
+        v2 = [0.1, 0.9, 0.2]
+        assert embeddings_service.compute_similarity(v1, v2) == pytest.approx(
+            embeddings_service.compute_similarity(v2, v1)
+        )
+
+    def test_result_bounded_between_minus_one_and_one(self, embeddings_service : EmbeddingService):
+        v1 = [3.0, -1.0, 2.0]
+        v2 = [-1.0, 4.0, 0.5]
+        result = embeddings_service.compute_similarity(v1, v2)
+        assert -1.0 <= result <= 1.0
 
 
 class TestIngestionService:
