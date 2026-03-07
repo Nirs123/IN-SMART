@@ -1,7 +1,8 @@
 """Embedding service for generating vector embeddings."""
 
+import math
 from typing import List, Optional
-from mistralai import Mistral
+from mistralai import Mistral, MistralError
 
 
 class EmbeddingService:
@@ -21,6 +22,7 @@ class EmbeddingService:
         self.api_key = api_key
         self.model = model
         self.client: Optional[Mistral] = None
+        self.initialize()
 
     def initialize(self) -> None:
         """Initialize Mistral client.
@@ -28,7 +30,9 @@ class EmbeddingService:
         Raises:
             ValueError: If API key is invalid or client initialization fails
         """
-        pass
+        self.client = Mistral(self.api_key)
+        if not self.client:
+            raise ValueError("Failed to initialize Mistral client")
 
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for a single text.
@@ -42,51 +46,19 @@ class EmbeddingService:
         Raises:
             ValueError: If embedding generation fails
         """
-        pass
+        if not text:
+            raise ValueError(f"Le texte ne doit pas être vide")
+        try:
+            embeddings_batch_response = self.client.embeddings.create(
+            model=self.model,
+            inputs=[text],
+        )
+        except MistralError as e:
+            raise ValueError(f"Erreur lors de l'appel à l'API Mistral : {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Erreur inattendue lors de l'appel à l'API : {str(e)}")
 
-    def generate_embeddings(
-        self,
-        texts: List[str],
-        batch_size: int = 100
-    ) -> List[List[float]]:
-        """Generate embeddings for multiple texts.
-        
-        Args:
-            texts: List of texts to embed
-            batch_size: Number of texts to process per batch
-        
-        Returns:
-            List[List[float]]: List of embedding vectors
-        
-        Raises:
-            ValueError: If embedding generation fails
-        """
-        pass
-
-    def generate_embeddings_batch(
-        self,
-        texts: List[str]
-    ) -> List[List[float]]:
-        """Generate embeddings in a single batch request.
-        
-        Args:
-            texts: List of texts to embed
-        
-        Returns:
-            List[List[float]]: List of embedding vectors
-        
-        Raises:
-            ValueError: If batch size exceeds API limits or generation fails
-        """
-        pass
-
-    def get_embedding_dimension(self) -> int:
-        """Get the dimension of embeddings produced by the model.
-        
-        Returns:
-            int: Embedding dimension
-        """
-        pass
+        return embeddings_batch_response.data[0].embedding
 
     def compute_similarity(
         self,
@@ -105,18 +77,17 @@ class EmbeddingService:
         Raises:
             ValueError: If embeddings have different dimensions
         """
-        pass
+        if len(embedding1) != len(embedding2):
+            raise ValueError("Les embeddings doivent avoir la même dimension.")
 
-    def normalize_embedding(self, embedding: List[float]) -> List[float]:
-        """Normalize embedding vector to unit length.
-        
-        Args:
-            embedding: Embedding vector to normalize
-        
-        Returns:
-            List[float]: Normalized embedding vector
-        
-        Raises:
-            ValueError: If embedding is empty
-        """
-        pass
+        dot_product = sum(e1 * e2 for e1, e2 in zip(embedding1, embedding2))
+
+        norm1 = math.sqrt(sum(e1 ** 2 for e1 in embedding1))
+        norm2 = math.sqrt(sum(e2 ** 2 for e2 in embedding2))
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        similarity = dot_product / (norm1 * norm2)
+
+        return similarity
