@@ -9,8 +9,10 @@ All PDF tests use pdfplumber locally, no network required.
 """
 
 import base64
-import pytest
 from pathlib import Path
+
+import pytest
+
 from processing.text import TextProcessor
 
 # ── Mistral API key ────────────────────────────────────────────────────────────
@@ -19,7 +21,7 @@ API_KEY = "votre_clé_api_mistral_ici"  # Replace with your actual API key
 # ── Paths relative to this test file's directory ──────────────────────────────
 # __file__ = tests/test_text/test_text_processor.py
 # .parent   = tests/test_text/
-TEST_DIR = Path(__file__).parent
+TEST_DIR = Path(__file__).parent.parent / "fixtures/files"
 PDF_PATH = TEST_DIR / "benev.pdf"
 
 # ── Output .txt file generated automatically for manual verification ──────────
@@ -36,6 +38,7 @@ MINIMAL_PNG_BYTES = base64.b64decode(
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(scope="module")
 def processor():
@@ -58,6 +61,7 @@ def pdf_bytes():
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 1 — Initialization (0 API calls)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_init_client_is_none_before_initialize():
     """The client must be None until initialize() has been called."""
@@ -82,6 +86,7 @@ def test_initialize_raises_on_empty_key():
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 2 — Full PDF extraction (0 API calls)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_extract_text_from_pdf_returns_expected_keys(processor, pdf_bytes):
     """extract_text_from_pdf must return the keys text, pages, page_count, metadata."""
@@ -141,6 +146,7 @@ def test_extract_text_from_pdf_file_not_found(processor):
 # Section 3 — Per-page extraction (0 API calls)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_extract_text_by_page_all_pages(processor, pdf_bytes):
     """Without page_numbers, all pages must be returned."""
     result = processor.extract_text_from_pdf(pdf_bytes)
@@ -169,10 +175,19 @@ def test_extract_text_by_page_out_of_bounds(processor, pdf_bytes):
 # Section 4 — PDF metadata (0 API calls)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_extract_pdf_metadata_keys(processor, pdf_bytes):
     """The metadata dict must contain exactly the expected keys."""
     meta = processor.extract_pdf_metadata(pdf_bytes)
-    expected = {"title", "author", "subject", "creator", "creation_date", "modification_date", "page_count"}
+    expected = {
+        "title",
+        "author",
+        "subject",
+        "creator",
+        "creation_date",
+        "modification_date",
+        "page_count",
+    }
     assert set(meta.keys()) == expected
 
 
@@ -186,6 +201,7 @@ def test_extract_pdf_metadata_page_count(processor, pdf_bytes):
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 5 — Validation (0 API calls)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_validate_pdf_file_valid(processor):
     """validate_pdf_file must return True for benev.pdf."""
@@ -224,6 +240,7 @@ def test_get_supported_image_formats(processor):
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 6 — OCR (1 API call)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_ocr_image_api(processor):
     """ocr_image must return a dict with 'text' and 'confidence' after the API call.

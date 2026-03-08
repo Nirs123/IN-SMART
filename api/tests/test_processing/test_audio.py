@@ -10,15 +10,15 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 from dotenv import load_dotenv
 
-from api.processing.audio import AudioProcessor
+from processing.audio import AudioProcessor
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 # Load environment variables from .env file (if it exists) to get the real API key for integration tests
-# load_dotenv(Path(__file__).parent.parent.parent / ".env")
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "audio"
 
 
 @pytest.fixture
@@ -128,13 +128,13 @@ class TestAudioProcessorInit:
 
 
 class TestInitialize:
-    @patch("api.processing.audio.Mistral")
+    @patch("processing.audio.Mistral")
     def test_initialize_success(self, mock_mistral_cls: Mock, processor: AudioProcessor) -> None:
         processor.initialize()
         mock_mistral_cls.assert_called_once_with(api_key=processor.api_key)
         assert processor.client is not None
 
-    @patch("api.processing.audio.Mistral", side_effect=Exception("bad key"))
+    @patch("processing.audio.Mistral", side_effect=Exception("bad key"))
     def test_initialize_failure(self, mock_mistral_cls: Mock, processor: AudioProcessor) -> None:
         with pytest.raises(ValueError, match="Failed to initialize"):
             processor.initialize()
