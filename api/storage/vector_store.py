@@ -12,9 +12,6 @@ from weaviate.util import generate_uuid5
 
 from api.models import Chunk
 
-logger = logging.getLogger(__name__)
-
-
 class VectorStore:
     """Weaviate client wrapper for vector storage operations."""
 
@@ -40,9 +37,7 @@ class VectorStore:
             host = parsed_url.hostname or "localhost"
             port = parsed_url.port or 8080
             secure = parsed_url.scheme == "https"
-            
-            logger.info(f"Connecting to Weaviate at {host}:{port} (secure={secure})")
-            
+
             self.client = weaviate.connect_to_custom(
                 http_host=host,
                 http_port=port,
@@ -54,12 +49,9 @@ class VectorStore:
             
             if not self.client.is_ready():
                 raise ConnectionError("Weaviate server is not ready")
-            
-            logger.info("Successfully connected to Weaviate")
-            
+
         except Exception as e:
             error_msg = f"Failed to connect to Weaviate at {self.url}: {e}"
-            logger.error(error_msg)
             raise ConnectionError(error_msg) from e
 
     def disconnect(self) -> None:
@@ -67,9 +59,6 @@ class VectorStore:
         if self.client is not None:
             try:
                 self.client.close()
-                logger.info("Disconnected from Weaviate")
-            except Exception as e:
-                logger.warning(f"Error during disconnect: {e}")
             finally:
                 self.client = None
 
@@ -110,11 +99,8 @@ class VectorStore:
         try:
             # Check if collection already exists
             if self.client.collections.exists(self.class_name):
-                logger.info(f"Collection '{self.class_name}' already exists")
                 return
-            
-            logger.info(f"Creating collection '{self.class_name}'")
-            
+
             # Create collection with properties
             self.client.collections.create(
                 name=self.class_name,
@@ -161,12 +147,9 @@ class VectorStore:
                 vector_index_config=Configure.VectorIndex.hnsw(),
                 vectorizer_config=Configure.Vectorizer.none(),
             )
-            
-            logger.info(f"Successfully created collection '{self.class_name}'")
-            
+
         except Exception as e:
             error_msg = f"Failed to create schema: {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
 
     def delete_schema(self) -> None:
@@ -182,15 +165,10 @@ class VectorStore:
         
         try:
             if self.client.collections.exists(self.class_name):
-                logger.warning(f"Deleting collection '{self.class_name}' and all data")
                 self.client.collections.delete(self.class_name)
-                logger.info(f"Successfully deleted collection '{self.class_name}'")
-            else:
-                logger.info(f"Collection '{self.class_name}' does not exist, nothing to delete")
-                
+
         except Exception as e:
             error_msg = f"Failed to delete schema: {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
 
     def insert_chunks(
@@ -247,12 +225,10 @@ class VectorStore:
                 
                 uuids.append(str(chunk_uuid))
             
-            logger.info(f"Inserted {len(uuids)} chunks into '{self.class_name}' for document '{document_id}'")
             return uuids
             
         except Exception as e:
             error_msg = f"Failed to insert chunks: {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
 
     def search_similar(
@@ -327,12 +303,10 @@ class VectorStore:
                     "uuid": str(obj.uuid),
                 })
             
-            logger.debug(f"Found {len(formatted_results)} similar chunks")
             return formatted_results
             
         except Exception as e:
             error_msg = f"Failed to search similar chunks: {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
 
     def _build_filter(self, where_filter: Dict[str, Any]) -> Filter:
@@ -389,13 +363,11 @@ class VectorStore:
             result = collection.data.delete_many(where=filter_obj)
             
             deleted_count = result.successful if hasattr(result, 'successful') else 0
-            logger.info(f"Deleted {deleted_count} chunks for document '{document_id}'")
-            
+
             return deleted_count
             
         except Exception as e:
             error_msg = f"Failed to delete chunks for document '{document_id}': {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
 
     def get_chunk_by_id(self, chunk_id: str) -> Optional[Dict[str, Any]]:
@@ -439,7 +411,6 @@ class VectorStore:
             
         except Exception as e:
             error_msg = f"Failed to retrieve chunk '{chunk_id}': {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
 
     def count_chunks(self, document_id: Optional[str] = None) -> int:
@@ -471,7 +442,6 @@ class VectorStore:
             
         except Exception as e:
             error_msg = f"Failed to count chunks: {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
 
     def batch_insert(
@@ -546,12 +516,8 @@ class VectorStore:
                 for obj in data_objects:
                     all_uuids.append(str(obj["uuid"]))
                 
-                logger.debug(f"Inserted batch {i // batch_size + 1}: {len(batch_chunks)} chunks")
-            
-            logger.info(f"Batch inserted {len(all_uuids)} chunks into '{self.class_name}' for document '{document_id}'")
             return all_uuids
             
         except Exception as e:
             error_msg = f"Failed to batch insert chunks: {e}"
-            logger.error(error_msg)
             raise ValueError(error_msg) from e
