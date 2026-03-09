@@ -222,44 +222,179 @@ class TestEmbeddingService:
 class TestIngestionService:
     """Test cases for IngestionService."""
 
-    def test_ingest_document(self) -> None:
-        """Test document ingestion pipeline.
-        
-        Should:
-        - Process document
-        - Chunk and embed text
-        - Store in vector database
-        - Return ingestion result
-        """
-        pass
+    @pytest.fixture
+    def ingestion_service(self) -> IngestionService:
+        """Create an IngestionService with all dependencies mocked."""
+        vector_store = MagicMock()
+        file_store = MagicMock()
+        audio_processor = MagicMock()
+        text_processor = MagicMock()
+        chunking_service = MagicMock()
+        embedding_service = MagicMock()
 
-    def test_process_document(self) -> None:
-        """Test document processing.
-        
-        Should:
-        - Extract text based on file type
-        - Handle PDF, audio, and image files
-        """
-        pass
+        service = IngestionService(
+            vector_store=vector_store,
+            file_store=file_store,
+            audio_processor=audio_processor,
+            text_processor=text_processor,
+            chunking_service=chunking_service,
+            embedding_service=embedding_service,
+        )
+        return service
 
-    def test_chunk_and_embed(self) -> None:
-        """Test chunking and embedding.
-        
-        Should:
-        - Chunk text
-        - Generate embeddings
-        - Return chunks with embeddings
-        """
-        pass
+    def test_ingest_document(self, ingestion_service: IngestionService) -> None:
+        """Test full ingestion pipeline returns correct result dict."""
+        # Setup mocks
+        ingestion_service.file_store.download_file.return_value = b"pdf binary data"
+        ingestion_service.text_processor.extract_text_from_pdf.return_value = {
+            "text": "Hello world content"
+        }
+        ingestion_service.chunking_service.chunk_text.return_value = [
+            Chunk(text="Hello world", chunk_index=0, start_char=0, end_char=11, metadata={}),
+            Chunk(text="world content", chunk_index=1, start_char=6, end_char=19, metadata={}),
+        ]
+        ingestion_service.embedding_service.generate_embedding.return_value = [0.1, 0.2, 0.3]
+        ingestion_service.vector_store.insert_chunks.return_value = ["uuid-1", "uuid-2"]
 
-    def test_delete_document_chunks(self) -> None:
-        """Test deleting document chunks.
-        
-        Should:
-        - Delete all chunks for document
-        - Return count of deleted chunks
-        """
-        pass
+        result = ingestion_service.ingest_document("doc-1", "pdf")
+
+        assert result["document_id"] == "doc-1"
+        assert result["chunks_created"] == 2
+        assert result["status"] == "success"
+        assert "processing_time" in result
+
+    def test_process_document_pdf(self, ingestion_service: IngestionService) -> None:
+        """Test document processing for PDF files."""
+        ingestion_service.file_store.download_file.return_value = b"pdf data"
+        ingestion_service.text_processor.extract_text_from_pdf.return_value = {
+            "text": "Extracted PDF text"
+        }
+
+        text = ingestion_service.process_document("doc.pdf", "pdf")
+
+        assert text == "Extracted PDF text"
+        ingestion_service.file_store.download_file.assert_called_once_with("doc.pdf")
+        ingestion_service.text_processor.extract_text_from_pdf.assert_called_once_with(b"pdf data")
+
+    def test_process_document_audio(self, ingestion_service: IngestionService) -> None:
+        """Test document processing for audio files."""
+        ingestion_service.file_store.download_file.return_value = b"audio data"
+        ingestion_service.audio_processor.transcribe_bytes.return_value = {
+            "text": "Transcribed audio"
+        }
+
+        text = ingestion_service.process_document("recording.mp3", "audio")
+
+        assert text == "Transcribed audio"
+        ingestion_service.audio_processor.transcribe_bytes.assert_called_once_with(
+            b"audio data", file_extension="mp3"
+        )
+
+    def test_process_document_image(self, ingestion_service: IngestionService) -> None:
+        """Test document processing for image files (OCR)."""
+        ingestion_service.file_store.download_file.return_value = b"image data"
+        ingestion_service.text_processor.ocr_image.return_value = {
+            "text": "OCR extracted text"
+        }
+
+        text = ingestion_service.process_document("notes.png", "image")
+
+        assert text == "OCR extracted text"
+        ingestion_service.text_processor.ocr_image.assert_called_once_with(
+            b"image data", filename="notes.png"
+        )
+
+    def test_process_document_unsupported_type(self, ingestion_service: IngestionService) -> None:
+        """Test that unsupported file type raises ValueError."""
+        ingestion_service.file_store.download_file.return_value = b"data"
+
+        with pytest.raises(ValueError, match="Unsupported file type"):
+            ingestion_service.process_document("doc.xyz", "xyz")
+
+    def test_chunk_and_embed(self, ingestion_service: IngestionService) -> None:
+        """Test chunking and embedding returns correct structure."""
+        ingestion_service.chunking_service.chunk_text.return_value = [
+            Chunk(text="chunk one", chunk_index=0, start_char=0, end_char=9, metadata={"document_id": "doc-1"}),
+        ]
+        ingestion_service.embedding_service.generate_embedding.return_value = [0.5, 0.6]
+
+        result = ingestion_service.chunk_and_embed("chunk one", "doc-1")
+
+        assert len(result) == 1
+        assert result[0]["text"] == "chunk one"
+        assert result[0]["chunk_index"] == 0
+        assert result[0]["embedding"] == [0.5, 0.6]
+        assert result[0]["document_id"] == "doc-1"
+
+    def test_store_chunks(self, ingestion_service: IngestionService) -> None:
+        """Test storing chunks delegates to vector_store correctly."""
+        chunks = [
+            {
+                "text": "chunk text",
+                "chunk_index": 0,
+                "start_char": 0,
+                "end_char": 10,
+                "embedding": [0.1, 0.2],
+                "document_id": "doc-1",
+                "metadata": {},
+            }
+        ]
+        ingestion_service.vector_store.insert_chunks.return_value = ["uuid-1"]
+
+        uuids = ingestion_service.store_chunks(chunks)
+
+        assert uuids == ["uuid-1"]
+        ingestion_service.vector_store.insert_chunks.assert_called_once()
+
+    def test_store_chunks_empty(self, ingestion_service: IngestionService) -> None:
+        """Test storing empty chunk list returns empty list."""
+        result = ingestion_service.store_chunks([])
+        assert result == []
+
+    def test_delete_document_chunks(self, ingestion_service: IngestionService) -> None:
+        """Test deleting document chunks delegates to vector_store."""
+        ingestion_service.vector_store.delete_by_document_id.return_value = 5
+
+        count = ingestion_service.delete_document_chunks("doc-1")
+
+        assert count == 5
+        ingestion_service.vector_store.delete_by_document_id.assert_called_once_with("doc-1")
+
+    def test_reingest_document(self, ingestion_service: IngestionService) -> None:
+        """Test reingestion deletes old chunks then re-ingests."""
+        ingestion_service.vector_store.delete_by_document_id.return_value = 3
+        ingestion_service.file_store.download_file.return_value = b"pdf data"
+        ingestion_service.text_processor.extract_text_from_pdf.return_value = {"text": "new text"}
+        ingestion_service.chunking_service.chunk_text.return_value = [
+            Chunk(text="new text", chunk_index=0, start_char=0, end_char=8, metadata={}),
+        ]
+        ingestion_service.embedding_service.generate_embedding.return_value = [0.1]
+        ingestion_service.vector_store.insert_chunks.return_value = ["uuid-new"]
+
+        result = ingestion_service.reingest_document("doc-1", "pdf")
+
+        ingestion_service.vector_store.delete_by_document_id.assert_called_once_with("doc-1")
+        assert result["status"] == "success"
+        assert result["chunks_created"] == 1
+
+    def test_get_ingestion_status_ingested(self, ingestion_service: IngestionService) -> None:
+        """Test ingestion status for an ingested document."""
+        ingestion_service.vector_store.count_chunks.return_value = 10
+
+        status = ingestion_service.get_ingestion_status("doc-1")
+
+        assert status["document_id"] == "doc-1"
+        assert status["is_ingested"] is True
+        assert status["chunk_count"] == 10
+
+    def test_get_ingestion_status_not_ingested(self, ingestion_service: IngestionService) -> None:
+        """Test ingestion status for a non-ingested document."""
+        ingestion_service.vector_store.count_chunks.return_value = 0
+
+        status = ingestion_service.get_ingestion_status("doc-new")
+
+        assert status["is_ingested"] is False
+        assert status["chunk_count"] == 0
 
 
 class TestLLMService:
