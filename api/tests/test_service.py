@@ -305,41 +305,180 @@ class TestLLMService:
 class TestRetrievalService:
     """Test cases for RetrievalService."""
 
-    def test_retrieve(self) -> None:
-        """Test basic retrieval.
-        
-        Should:
-        - Retrieve relevant chunks
-        - Filter by similarity threshold
-        - Return top_k results
-        """
-        pass
+    @pytest.fixture
+    def retrieval_service(self) -> RetrievalService:
+        """Create a RetrievalService with mocked dependencies."""
+        vector_store = MagicMock()
+        embedding_service = MagicMock()
 
-    def test_retrieve_with_reranking(self) -> None:
-        """Test retrieval with reranking.
-        
-        Should:
-        - Retrieve more chunks
-        - Rerank for better relevance
-        - Return top_k reranked results
-        """
-        pass
+        service = RetrievalService(
+            vector_store=vector_store,
+            embedding_service=embedding_service,
+            top_k=5,
+            similarity_threshold=0.7,
+        )
+        return service
 
-    def test_retrieve_by_document(self) -> None:
-        """Test retrieval from specific document.
-        
-        Should:
-        - Filter by document_id
-        - Return relevant chunks
-        """
-        pass
+    def test_retrieve(self, retrieval_service: RetrievalService) -> None:
+        """Test basic retrieval with similarity threshold filtering."""
+        retrieval_service.embedding_service.generate_embedding.return_value = [0.1, 0.2]
+        retrieval_service.vector_store.search_similar.return_value = [
+            {"text": "relevant chunk", "doc_id": "doc-1", "chunk_index": 0,
+             "distance": 0.1, "metadata": {}, "uuid": "uuid-1"},
+            {"text": "irrelevant chunk", "doc_id": "doc-2", "chunk_index": 1,
+             "distance": 0.9, "metadata": {}, "uuid": "uuid-2"},
+        ]
 
-    def test_format_context(self) -> None:
-        """Test context formatting.
-        
-        Should:
-        - Format chunks into context string
-        - Include citations
-        - Respect max_length if provided
-        """
-        pass
+        results = retrieval_service.retrieve("test query")
+
+        assert len(results) == 1  # Only the chunk with distance 0.1 (similarity 0.9) passes threshold 0.7
+        assert results[0]["text"] == "relevant chunk"
+        assert results[0]["similarity"] == 0.9
+        assert results[0]["document_id"] == "doc-1"
+
+    def test_retrieve_with_document_filter(self, retrieval_service: RetrievalService) -> None:
+        """Test retrieval with document ID filter."""
+        retrieval_service.embedding_service.generate_embedding.return_value = [0.1]
+        retrieval_service.vector_store.search_similar.return_value = []
+
+        retrieval_service.retrieve("query", document_ids=["doc-1"])
+
+        call_args = retrieval_service.vector_store.search_similar.call_args
+        assert call_args.kwargs["where_filter"] == {"doc_id": "doc-1"}
+
+    def test_retrieve_with_multiple_document_filter(self, retrieval_service: RetrievalService) -> None:
+        """Test retrieval with multiple document ID filter."""
+        retrieval_service.embedding_service.generate_embedding.return_value = [0.1]
+        retrieval_service.vector_store.search_similar.return_value = []
+
+        retrieval_service.retrieve("query", document_ids=["doc-1", "doc-2"])
+
+        call_args = retrieval_service.vector_store.search_similar.call_args
+        assert call_args.kwargs["where_filter"] == {"doc_ids": ["doc-1", "doc-2"]}
+
+    def test_retrieve_with_reranking(self, retrieval_service: RetrievalService) -> None:
+        """Test retrieval with reranking re-scores and sorts results."""
+        retrieval_service.embedding_service.generate_embedding.return_value = [0.5, 0.5]
+        retrieval_service.vector_store.search_similar.return_value = [
+            {"text": "chunk A", "doc_id": "doc-1", "chunk_index": 0,
+             "distance": 0.2, "metadata": {}, "uuid": "uuid-1"},
+            {"text": "chunk B", "doc_id": "doc-1", "chunk_index": 1,
+             "distance": 0.3, "metadata": {}, "uuid": "uuid-2"},
+        ]
+        # After reranking, compute_similarity returns different scores
+        retrieval_service.embedding_service.compute_similarity.side_effect = [0.95, 0.98]
+
+        results = retrieval_service.retrieve_with_reranking("test query", top_k=2)
+
+        # chunk B should now be first (score 0.98 > 0.95)
+        assert len(results) == 2
+        assert results[0]["similarity"] == 0.98
+        assert results[1]["similarity"] == 0.95
+
+    def test_retrieve_by_document(self, retrieval_service: RetrievalService) -> None:
+        """Test retrieve_by_document delegates to retrieve with filter."""
+        retrieval_service.embedding_service.generate_embedding.return_value = [0.1]
+        retrieval_service.vector_store.search_similar.return_value = [
+            {"text": "chunk", "doc_id": "doc-1", "chunk_index": 0,
+             "distance": 0.1, "metadata": {}, "uuid": "uuid-1"},
+        ]
+
+        results = retrieval_service.retrieve_by_document("query", "doc-1")
+
+        call_args = retrieval_service.vector_store.search_similar.call_args
+        assert call_args.kwargs["where_filter"] == {"doc_id": "doc-1"}
+        assert len(results) == 1
+
+    def test_hybrid_retrieve(self, retrieval_service: RetrievalService) -> None:
+        """Test hybrid retrieval combines semantic and keyword scores."""
+        retrieval_service.embedding_service.generate_embedding.return_value = [0.1]
+        retrieval_service.vector_store.search_similar.return_value = [
+            {"text": "machine learning algorithms", "doc_id": "doc-1", "chunk_index": 0,
+             "distance": 0.1, "metadata": {}, "uuid": "uuid-1"},
+            {"text": "cooking recipes", "doc_id": "doc-2", "chunk_index": 1,
+             "distance": 0.15, "metadata": {}, "uuid": "uuid-2"},
+        ]
+
+        results = retrieval_service.hybrid_retrieve("machine learning", top_k=2, keyword_weight=0.3)
+
+        # "machine learning algorithms" has keyword overlap with query, so it should score higher
+        assert len(results) >= 1
+
+    def test_set_top_k_valid(self, retrieval_service: RetrievalService) -> None:
+        """Test setting valid top_k."""
+        retrieval_service.set_top_k(10)
+        assert retrieval_service.top_k == 10
+
+    def test_set_top_k_invalid(self, retrieval_service: RetrievalService) -> None:
+        """Test setting invalid top_k raises ValueError."""
+        with pytest.raises(ValueError, match="top_k must be greater than 0"):
+            retrieval_service.set_top_k(0)
+
+        with pytest.raises(ValueError, match="top_k must be greater than 0"):
+            retrieval_service.set_top_k(-1)
+
+    def test_set_similarity_threshold_valid(self, retrieval_service: RetrievalService) -> None:
+        """Test setting valid similarity threshold."""
+        retrieval_service.set_similarity_threshold(0.5)
+        assert retrieval_service.similarity_threshold == 0.5
+
+    def test_set_similarity_threshold_invalid(self, retrieval_service: RetrievalService) -> None:
+        """Test setting invalid similarity threshold raises ValueError."""
+        with pytest.raises(ValueError, match="Similarity threshold must be between 0.0 and 1.0"):
+            retrieval_service.set_similarity_threshold(-0.1)
+
+        with pytest.raises(ValueError, match="Similarity threshold must be between 0.0 and 1.0"):
+            retrieval_service.set_similarity_threshold(1.5)
+
+    def test_format_context(self, retrieval_service: RetrievalService) -> None:
+        """Test context formatting with citations."""
+        chunks = [
+            {"text": "First chunk content", "document_id": "doc-1", "similarity": 0.9},
+            {"text": "Second chunk content", "document_id": "doc-2", "similarity": 0.8},
+        ]
+
+        context = retrieval_service.format_context(chunks)
+
+        assert "[Source 1 - doc-1]" in context
+        assert "First chunk content" in context
+        assert "[Source 2 - doc-2]" in context
+        assert "Second chunk content" in context
+
+    def test_format_context_empty(self, retrieval_service: RetrievalService) -> None:
+        """Test formatting empty chunks returns empty string."""
+        assert retrieval_service.format_context([]) == ""
+
+    def test_format_context_max_length(self, retrieval_service: RetrievalService) -> None:
+        """Test context truncation with max_length."""
+        chunks = [
+            {"text": "A" * 100, "document_id": "doc-1", "similarity": 0.9},
+        ]
+
+        context = retrieval_service.format_context(chunks, max_length=50)
+
+        assert len(context) == 50
+
+    def test_get_retrieval_statistics(self, retrieval_service: RetrievalService) -> None:
+        """Test retrieval statistics computation."""
+        chunks = [
+            {"text": "a", "document_id": "doc-1", "similarity": 0.9},
+            {"text": "b", "document_id": "doc-2", "similarity": 0.7},
+            {"text": "c", "document_id": "doc-1", "similarity": 0.8},
+        ]
+
+        stats = retrieval_service.get_retrieval_statistics("test query", chunks)
+
+        assert stats["query"] == "test query"
+        assert stats["num_results"] == 3
+        assert stats["avg_similarity"] == pytest.approx(0.8, abs=0.01)
+        assert stats["min_similarity"] == 0.7
+        assert stats["max_similarity"] == 0.9
+        assert stats["unique_documents"] == 2
+
+    def test_get_retrieval_statistics_empty(self, retrieval_service: RetrievalService) -> None:
+        """Test statistics for empty results."""
+        stats = retrieval_service.get_retrieval_statistics("query", [])
+
+        assert stats["num_results"] == 0
+        assert stats["avg_similarity"] == 0.0
+        assert stats["unique_documents"] == 0
