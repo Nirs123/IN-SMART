@@ -51,5 +51,3 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 
-[tool.hatch.build.targets.wheel]
-packages = ["eval", "processing", "services", "storage", "main.py"]
