@@ -1,5 +1,6 @@
 """Ingestion service for processing and storing documents."""
 
+import time
 from typing import Dict, Any, Optional, List
 from api.storage.vector_store import VectorStore
 from api.storage.file_store import FileStore
@@ -7,6 +8,7 @@ from api.processing.audio import AudioProcessor
 from api.processing.text import TextProcessor
 from api.services.chunking import ChunkingService
 from api.services.embeddings import EmbeddingService
+from api.models import Chunk
 
 
 class IngestionService:
@@ -69,7 +71,31 @@ class IngestionService:
             ValueError: If document not found or processing fails
             FileNotFoundError: If document file doesn't exist
         """
-        pass
+        start_time = time.time()
+
+        try:
+            # 1-2. Process document (download + extract text)
+            text = self.process_document(document_id, file_type)
+
+            # 3-4. Chunk and embed
+            chunks = self.chunk_and_embed(text, document_id, metadata)
+
+            # 5. Store in vector database
+            uuids = self.store_chunks(chunks)
+
+            processing_time = time.time() - start_time
+
+            return {
+                "document_id": document_id,
+                "chunks_created": len(uuids),
+                "status": "success",
+                "processing_time": round(processing_time, 3),
+            }
+        except Exception as e:
+            processing_time = time.time() - start_time
+            raise ValueError(
+                f"Ingestion failed for document '{document_id}': {e}"
+            ) from e
 
     def process_document(
         self,
@@ -89,7 +115,28 @@ class IngestionService:
             ValueError: If file type is unsupported or processing fails
             FileNotFoundError: If document file doesn't exist
         """
-        pass
+        # Download file from file store
+        file_data = self.file_store.download_file(document_id)
+
+        file_type_lower = file_type.lower()
+
+        if file_type_lower == "pdf":
+            result = self.text_processor.extract_text_from_pdf(file_data)
+            return result.get("text", "")
+
+        elif file_type_lower == "audio":
+            # Determine extension from document_id or default to mp3
+            extension = document_id.rsplit(".", 1)[-1] if "." in document_id else "mp3"
+            result = self.audio_processor.transcribe_bytes(file_data, file_extension=extension)
+            return result.get("text", "")
+
+        elif file_type_lower == "image":
+            filename = document_id if "." in document_id else f"{document_id}.png"
+            result = self.text_processor.ocr_image(file_data, filename=filename)
+            return result.get("text", "")
+
+        else:
+            raise ValueError(f"Unsupported file type: '{file_type}'. Supported: pdf, audio, image")
 
     def chunk_and_embed(
         self,
@@ -115,7 +162,27 @@ class IngestionService:
         Raises:
             ValueError: If chunking or embedding fails
         """
-        pass
+        # Chunk the text
+        chunk_metadata = metadata.copy() if metadata else {}
+        chunk_metadata["document_id"] = document_id
+
+        chunks = self.chunking_service.chunk_text(text, metadata=chunk_metadata)
+
+        # Generate embeddings for each chunk
+        result: List[Dict[str, Any]] = []
+        for chunk in chunks:
+            embedding = self.embedding_service.generate_embedding(chunk.text)
+            result.append({
+                "text": chunk.text,
+                "chunk_index": chunk.chunk_index,
+                "start_char": chunk.start_char,
+                "end_char": chunk.end_char,
+                "embedding": embedding,
+                "document_id": document_id,
+                "metadata": chunk.metadata,
+            })
+
+        return result
 
     def store_chunks(
         self,
@@ -132,7 +199,28 @@ class IngestionService:
         Raises:
             ValueError: If storage fails
         """
-        pass
+        if not chunks:
+            return []
+
+        # Extract document_id from the first chunk
+        document_id = chunks[0]["document_id"]
+
+        # Convert dicts back to Chunk models for vector_store
+        chunk_models: List[Chunk] = []
+        embeddings: List[List[float]] = []
+
+        for chunk_data in chunks:
+            chunk_model = Chunk(
+                text=chunk_data["text"],
+                chunk_index=chunk_data["chunk_index"],
+                start_char=chunk_data["start_char"],
+                end_char=chunk_data["end_char"],
+                metadata=chunk_data.get("metadata", {}),
+            )
+            chunk_models.append(chunk_model)
+            embeddings.append(chunk_data["embedding"])
+
+        return self.vector_store.insert_chunks(chunk_models, embeddings, document_id)
 
     def delete_document_chunks(self, document_id: str) -> int:
         """Delete all chunks associated with a document.
@@ -146,7 +234,7 @@ class IngestionService:
         Raises:
             ValueError: If deletion fails
         """
-        pass
+        return self.vector_store.delete_by_document_id(document_id)
 
     def reingest_document(
         self,
@@ -167,7 +255,11 @@ class IngestionService:
         Raises:
             ValueError: If reingestion fails
         """
-        pass
+        # Delete old chunks first
+        self.delete_document_chunks(document_id)
+
+        # Re-ingest
+        return self.ingest_document(document_id, file_type, metadata)
 
     def get_ingestion_status(self, document_id: str) -> Dict[str, Any]:
         """Get ingestion status for a document.
@@ -180,9 +272,14 @@ class IngestionService:
                 - document_id: Document identifier
                 - is_ingested: Whether document is ingested
                 - chunk_count: Number of chunks in vector store
-                - last_ingested: Timestamp of last ingestion
         
         Raises:
             ValueError: If status check fails
         """
-        pass
+        chunk_count = self.vector_store.count_chunks(document_id)
+
+        return {
+            "document_id": document_id,
+            "is_ingested": chunk_count > 0,
+            "chunk_count": chunk_count,
+        }
